@@ -4,17 +4,24 @@
 #include <sdktools>
 #include <dhooks>
 
+#include <vip_core>
+
+static const char g_sFeature[] = "AmmoExtended";
+
 Handle g_hGetMaxClip;
 
-static const char Weapon[][] = {"glock", "usp", "p228", "deagle", "elite", "fiveseven", "m3", "xm1014", "mac10", "tmp", "mp5navy", "ump45", "p90", "galil", "famas", "ak47", "m4a1", "scout", "sg550", "aug", "awp", "g3sg1", "sg552", "m249"}
+static const char Weapon[][] = {"glock", "usp", "p228", "deagle", "elite", "fiveseven", "mac10", "tmp", "mp5navy", "ump45", "p90", "galil", "famas", "ak47", "m4a1", "scout", "sg550", "aug", "awp", "g3sg1", "sg552", "m249"}
+static const int PAmmo[] = {20, 12, 13, 7, 30, 20, 30, 30, 30, 25, 50, 35, 25, 30, 30, 10, 30, 30, 10, 20, 30, 100};
 
 const int Weapons = sizeof(Weapon);
 
 int Ammo[Weapons];
 
+float Multiplier[MAXPLAYERS];
+
 public Plugin myinfo =
 {
-	name         = "AmmoManager",
+	name         = "AmmoManager + VIP",
 	author       = "zaCade",
 	description  = "",
 	version      = "1.0.0"
@@ -43,6 +50,8 @@ public void OnPluginStart()
 		SetFailState("DHookCreate(iMaxClipOffset, HookType_Entity, ReturnType_Int, ThisPointer_CBaseEntity, OnGetMaxClip) failed!");
 		return;
 	}
+	
+	LoadTranslations("vip_modules.phrases");
 
 	// Late load.
 	int entity = INVALID_ENT_REFERENCE;
@@ -52,11 +61,61 @@ public void OnPluginStart()
 	}
 
 	delete hGameConf;
+	
+	
+	if(VIP_IsVIPLoaded())
+	{
+		VIP_OnVIPLoaded();
+	}
+	
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsClientInGame(i) && VIP_IsClientVIP(i))
+		{
+			GetClientMultiplier(i, VIP_IsClientFeatureUse(i, g_sFeature));
+		}
+	}
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
+public void OnPluginEnd() 
+{
+	if(CanTestFeatures() && GetFeatureStatus(FeatureType_Native, "VIP_UnregisterFeature") == FeatureStatus_Available)
+	{
+		VIP_UnregisterFeature(g_sFeature);
+	}
+}
+
+public void VIP_OnVIPLoaded() 
+{
+	VIP_RegisterFeature(g_sFeature, INT, TOGGLABLE, ItemSelect, ItemDisplay);
+}
+
+public void VIP_OnVIPClientLoaded(int iClient)
+{
+	GetClientMultiplier(iClient, VIP_IsClientFeatureUse(iClient, g_sFeature));
+}
+
+public Action ItemSelect(int iClient, const char[] szFeature, VIP_ToggleState eOldStatus, VIP_ToggleState &eNewStatus)
+{
+	GetClientMultiplier(iClient, (eNewStatus == ENABLED));
+}
+
+public bool ItemDisplay(int iClient, const char[] feature, char[] display, int maxlen)
+{
+	if(VIP_IsClientFeatureUse(iClient, feature))
+	{
+		FormatEx(display, maxlen, "%T [+%i %%]", feature, iClient, VIP_GetClientFeatureInt(iClient, feature));
+		return true;
+	}
+
+	return false;
+}
+
+void GetClientMultiplier(int iClient, bool bToggle)
+{
+	Multiplier[iClient] = bToggle ? (1.0 + float(VIP_GetClientFeatureInt(iClient, g_sFeature)) / 100.0):(0.0);
+}
+
 public void OnMapStart()
 {
 	char szBuffer[256];
@@ -82,9 +141,6 @@ public void OnMapStart()
 	delete hKeyValues;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
 public void OnEntityCreated(int entity, const char[] classname)
 {
 	if (IsValidEntity(entity) && strncmp(classname, "weapon_", 7, false) == 0)
@@ -98,22 +154,42 @@ public MRESReturn OnGetMaxClip(int entity, Handle hReturn)
 	if (!IsValidEntity(entity))
 		return MRES_Ignored;
 
-	static char sClassname[32];
+	char sClassname[32];
 	GetEntityClassname(entity, sClassname, 32);
+	
+	if(!sClassname[8])
+		return MRES_Ignored;
 
 	for(int i; i < Weapons; i++)
 	{
 		if(!strcmp(sClassname[7], Weapon[i], true))
 		{
-			if(Ammo[i] > 0)
+			int iAmmo = Ammo[i];
+			if(i > 5)
 			{
-				DHookSetReturn(hReturn, Ammo[i]);
+				int iClient = GetEntPropEnt(entity, Prop_Data, "m_hOwner");
+				if(0 < iClient <= MaxClients && Multiplier[iClient] > 1.0)
+				{
+					if(iAmmo <= 0)
+					{
+						iAmmo = PAmmo[i];
+					}
+					iAmmo = RoundToNearest(float(iAmmo) * Multiplier[iClient]);
+				}
+			}
+			if(iAmmo > 0)
+			{
+				DHookSetReturn(hReturn, iAmmo);
 				return MRES_Supercede;
 			}
 			break;
-			
 		}
 	}
 
 	return MRES_Ignored;
+}
+
+public void OnClientDisconnect(int iClient)
+{
+	Multiplier[iClient] = 0.0;
 }
