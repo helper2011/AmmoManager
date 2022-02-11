@@ -5,13 +5,13 @@
 #include <dhooks>
 
 Handle g_hGetMaxClip;
-Handle g_hGetMaxReserve;
 
-KeyValues g_aKeyValues;
+static const char Weapon[][] = {"glock", "usp", "p228", "deagle", "elite", "fiveseven", "m3", "xm1014", "mac10", "tmp", "mp5navy", "ump45", "p90", "galil", "famas", "ak47", "m4a1", "scout", "sg550", "aug", "awp", "g3sg1", "sg552", "m249"}
 
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
+const int Weapons = sizeof(Weapon);
+
+int Ammo[Weapons];
+
 public Plugin myinfo =
 {
 	name         = "AmmoManager",
@@ -20,9 +20,6 @@ public Plugin myinfo =
 	version      = "1.0.0"
 };
 
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
 public void OnPluginStart()
 {
 	Handle hGameConf;
@@ -32,7 +29,6 @@ public void OnPluginStart()
 		return;
 	}
 
-	// CBaseCombatWeapon::GetMaxClip1() const
 	int iMaxClipOffset;
 	if ((iMaxClipOffset = GameConfGetOffset(hGameConf, "GetMaxClip")) == -1)
 	{
@@ -46,25 +42,6 @@ public void OnPluginStart()
 		delete hGameConf;
 		SetFailState("DHookCreate(iMaxClipOffset, HookType_Entity, ReturnType_Int, ThisPointer_CBaseEntity, OnGetMaxClip) failed!");
 		return;
-	}
-
-	// CBaseCombatWeapon::GetMaxReserve1() const
-	if (GetEngineVersion() == Engine_CSGO)
-	{
-		int iMaxReserveOffset;
-		if ((iMaxReserveOffset = GameConfGetOffset(hGameConf, "GetMaxReserve")) == -1)
-		{
-			delete hGameConf;
-			SetFailState("GameConfGetOffset(hGameConf, \"GetMaxReserve\") failed!");
-			return;
-		}
-
-		if ((g_hGetMaxReserve = DHookCreate(iMaxReserveOffset, HookType_Entity, ReturnType_Int, ThisPointer_CBaseEntity, OnGetMaxReserve)) == INVALID_HANDLE)
-		{
-			delete hGameConf;
-			SetFailState("DHookCreate(iMaxReserveOffset, HookType_Entity, ReturnType_Int, ThisPointer_CBaseEntity, OnGetMaxReserve) failed!");
-			return;
-		}
 	}
 
 	// Late load.
@@ -82,23 +59,27 @@ public void OnPluginStart()
 //----------------------------------------------------------------------------------------------------
 public void OnMapStart()
 {
-	char sFilePath[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, sFilePath, sizeof(sFilePath), "configs/AmmoManager.cfg");
-
-	if (!FileExists(sFilePath))
+	char szBuffer[256];
+	BuildPath(Path_SM, szBuffer, 256, "configs/AmmoManager.cfg");
+	KeyValues hKeyValues = new KeyValues("weapons");
+	
+	if(hKeyValues.ImportFromFile(szBuffer))
 	{
-		LogMessage("Config file doesn't exist: \"%s\"!", sFilePath);
-		return;
+		for(int i; i < Weapons; i++)
+		{
+			hKeyValues.Rewind();
+			if(hKeyValues.JumpToKey(Weapon[i]))
+			{
+				Ammo[i] = hKeyValues.GetNum("primary clip");
+			}
+		}
 	}
-	delete g_aKeyValues;
-	g_aKeyValues = new KeyValues("weapons");
-
-	if (!g_aKeyValues.ImportFromFile(sFilePath))
+	else
 	{
-		LogMessage("Couldn't load config file: \"%s\"!", sFilePath);
-		delete g_aKeyValues;
-		return;
+		LogMessage("Config file doesn't exist: \"%s\"!", szBuffer);
 	}
+	
+	delete hKeyValues;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -106,66 +87,33 @@ public void OnMapStart()
 //----------------------------------------------------------------------------------------------------
 public void OnEntityCreated(int entity, const char[] classname)
 {
-	if (strncmp(classname, "weapon_", 7, false) == 0)
+	if (IsValidEntity(entity) && strncmp(classname, "weapon_", 7, false) == 0)
 	{
-		if (g_hGetMaxClip != INVALID_HANDLE)
-			DHookEntity(g_hGetMaxClip, true, entity);
-
-		if (g_hGetMaxReserve != INVALID_HANDLE)
-			DHookEntity(g_hGetMaxReserve, true, entity);
+		DHookEntity(g_hGetMaxClip, true, entity);
 	}
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
 public MRESReturn OnGetMaxClip(int entity, Handle hReturn)
 {
 	if (!IsValidEntity(entity))
 		return MRES_Ignored;
 
-	bool bChanged;
-	char sClassname[128];
-	GetEntityClassname(entity, sClassname, sizeof(sClassname))
+	static char sClassname[32];
+	GetEntityClassname(entity, sClassname, 32);
 
-	if (g_aKeyValues && g_aKeyValues.JumpToKey(sClassname, false))
+	for(int i; i < Weapons; i++)
 	{
-		int iClip;
-		if ((iClip = g_aKeyValues.GetNum("primary clip", -1)) != -1)
+		if(!strcmp(sClassname[7], Weapon[i], true))
 		{
-			DHookSetReturn(hReturn, iClip);
-			bChanged = true;
+			if(Ammo[i] > 0)
+			{
+				DHookSetReturn(hReturn, Ammo[i]);
+				return MRES_Supercede;
+			}
+			break;
+			
 		}
-
-		g_aKeyValues.Rewind();
 	}
 
-	return (bChanged) ? MRES_Supercede : MRES_Ignored;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
-public MRESReturn OnGetMaxReserve(int entity, Handle hReturn)
-{
-	if (!IsValidEntity(entity))
-		return MRES_Ignored;
-
-	bool bChanged;
-	char sClassname[128];
-	GetEntityClassname(entity, sClassname, sizeof(sClassname))
-
-	if (g_aKeyValues && g_aKeyValues.JumpToKey(sClassname, false))
-	{
-		int iReserve;
-		if ((iReserve = g_aKeyValues.GetNum("primary reserve", -1)) != -1)
-		{
-			DHookSetReturn(hReturn, iReserve);
-			bChanged = true;
-		}
-
-		g_aKeyValues.Rewind();
-	}
-
-	return (bChanged) ? MRES_Supercede : MRES_Ignored;
+	return MRES_Ignored;
 }
