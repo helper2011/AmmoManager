@@ -4,17 +4,18 @@
 #include <sdktools>
 #include <dhooks>
 
+#pragma newdecls required
+
 Handle g_hGetMaxClip;
 
 static const char Weapon[][] = {"glock", "usp", "p228", "deagle", "elite", "fiveseven", "m3", "xm1014", "mac10", "tmp", "mp5navy", "ump45", "p90", "galil", "famas", "ak47", "m4a1", "scout", "sg550", "aug", "awp", "g3sg1", "sg552", "m249"}
 
-const int Weapons = sizeof(Weapon);
-
-int Ammo[Weapons];
+int AmmoSettings[sizeof(Weapon)];
+int Ammo[2048];
 
 public Plugin myinfo =
 {
-	name         = "AmmoManager",
+	name         = "AmmoManager [Edited]",
 	author       = "zaCade",
 	description  = "",
 	version      = "1.0.0"
@@ -22,6 +23,27 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {
+	char szBuffer[256];
+	BuildPath(Path_SM, szBuffer, 256, "configs/AmmoManager.cfg");
+	KeyValues hKeyValues = new KeyValues("Weapons");
+	
+	if(hKeyValues.ImportFromFile(szBuffer))
+	{
+		for(int i; i < sizeof(Weapon); i++)
+		{
+			hKeyValues.Rewind();
+			if(hKeyValues.JumpToKey(Weapon[i]))
+			{
+				AmmoSettings[i] = hKeyValues.GetNum("primary clip");
+			}
+		}
+	}
+	else
+	{
+		LogMessage("Config file doesn't exist: \"%s\"!", szBuffer);
+	}
+	
+	delete hKeyValues;
 	Handle hGameConf;
 	if ((hGameConf = LoadGameConfigFile("AmmoManager.games")) == INVALID_HANDLE)
 	{
@@ -48,7 +70,7 @@ public void OnPluginStart()
 	int entity = INVALID_ENT_REFERENCE;
 	while ((entity = FindEntityByClassname(entity, "weapon_*")) != INVALID_ENT_REFERENCE)
 	{
-		OnEntityCreated(entity, "weapon_*");
+		OnEntitySpawned(entity, "weapon_*");
 	}
 
 	delete hGameConf;
@@ -57,39 +79,16 @@ public void OnPluginStart()
 //----------------------------------------------------------------------------------------------------
 // Purpose:
 //----------------------------------------------------------------------------------------------------
-public void OnMapStart()
+public void OnEntitySpawned(int entity, const char[] classname)
 {
-	char szBuffer[256];
-	BuildPath(Path_SM, szBuffer, 256, "configs/AmmoManager.cfg");
-	KeyValues hKeyValues = new KeyValues("weapons");
-	
-	if(hKeyValues.ImportFromFile(szBuffer))
+	if (IsValidEntity(entity) && strlen(classname) > 8 && classname[0] == 'w' && classname[6] == '_')
 	{
-		for(int i; i < Weapons; i++)
+		int iIndex = GetWeaponIndex(classname[7]);
+		if(iIndex != -1 && AmmoSettings[iIndex])
 		{
-			hKeyValues.Rewind();
-			if(hKeyValues.JumpToKey(Weapon[i]))
-			{
-				Ammo[i] = hKeyValues.GetNum("primary clip");
-			}
+			Ammo[entity] = AmmoSettings[iIndex];
+			DHookEntity(g_hGetMaxClip, true, entity);
 		}
-	}
-	else
-	{
-		LogMessage("Config file doesn't exist: \"%s\"!", szBuffer);
-	}
-	
-	delete hKeyValues;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
-public void OnEntityCreated(int entity, const char[] classname)
-{
-	if (IsValidEntity(entity) && strncmp(classname, "weapon_", 7, false) == 0)
-	{
-		DHookEntity(g_hGetMaxClip, true, entity);
 	}
 }
 
@@ -98,22 +97,18 @@ public MRESReturn OnGetMaxClip(int entity, Handle hReturn)
 	if (!IsValidEntity(entity))
 		return MRES_Ignored;
 
-	static char sClassname[32];
-	GetEntityClassname(entity, sClassname, 32);
+	DHookSetReturn(hReturn, Ammo[entity]);
+	return MRES_Supercede;
+}
 
-	for(int i; i < Weapons; i++)
+stock int GetWeaponIndex(const char[] weapon)
+{
+	for(int i; i < sizeof(Weapon); i++)
 	{
-		if(!strcmp(sClassname[7], Weapon[i], true))
+		if(!strcmp(weapon, Weapon[i], false))
 		{
-			if(Ammo[i] > 0)
-			{
-				DHookSetReturn(hReturn, Ammo[i]);
-				return MRES_Supercede;
-			}
-			break;
-			
+			return i;
 		}
 	}
-
-	return MRES_Ignored;
+	return -1;
 }
